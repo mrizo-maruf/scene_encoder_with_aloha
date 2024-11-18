@@ -23,6 +23,8 @@ class MainConfig:
     log_path: str = general_path + "/log.txt"
     camera_usd_local_path = general_path + '/assets/aloha/aloloha_v03_cameras.usd'
     camera_image_saved_path = general_path + "/img/"
+    loss_path:str = general_path+'/loss.pt'
+    load_emb_nn:str = general_path + "/scene_embedding_epoch_80000.pth"
     training_mode:int = 0
     scene_file: str = general_path + "/scene/"
     eval:bool = False
