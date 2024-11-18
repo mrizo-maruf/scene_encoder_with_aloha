@@ -12,12 +12,19 @@
 alias PYTHON_PATH=~/.local/share/ov/pkg/isaac_sim-*/python.sh
 ```
 в файле configs/main_cnfig.py в переменной general_path оределить путь до директории проекта
+
 в файле train.py/eval.py в переменной в функции gymnasium.make вставить версию (пример: tasks:rlmodel-v0):
+
 Для пункта 4.2 (Обучение с картой знаний)
+
 rlmodel-v0 - обучение на графе знаний
+
 rlmodel-v1 - обучение без графа знаний
+
 необходимо получать loss следующим образом:
+
 в isaac-sim-4.1.0/kit/python/lib/python3.10/site-packages/stable_baselines3/
+
 sac/sac.py на строчке 277 добавить:
 ```
 import torch
