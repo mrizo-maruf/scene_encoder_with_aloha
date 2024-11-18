@@ -239,7 +239,7 @@ class CLGRENV(gym.Env):
         self.change_line = 0
         self.num_of_envs = 0
         self.eval = asdict(config).get('eval', None)
-        torch.save(torch.tensor([0]), '/home/kit/Downloads/loss.pt')
+        torch.save(torch.tensor([0]), asdict(config).get('loss_path', None))
 
         import omni.isaac.core.utils.prims as prim_utils
 
@@ -260,7 +260,7 @@ class CLGRENV(gym.Env):
         device  = self.device
         self.embedding_net = SceneEmbeddingNetwork(object_feature_dim=518).to(device)
         self.embedding_net.to(self.device)
-        self.embedding_net.load_state_dict(torch.load("/home/kit/.local/share/ov/pkg/isaac-sim-4.1.0/standalone_examples/Aloha_graph/Aloha/scene_embedding_epoch_80000.pth", map_location=device))
+        self.embedding_net.load_state_dict(torch.load(asdict(self.config).get('load_emb_nn', None), map_location=device))
         # self.embedding_optimizer = optim.Adam(self.embedding_net.parameters(), lr=0.001)
 
     
@@ -663,7 +663,7 @@ class CLGRENV(gym.Env):
 
         # object_features = self.prepare_input_data(objects, bbox_pose)
 
-        rl_loss = torch.load('/home/kit/Downloads/loss.pt')
+        rl_loss = torch.load(asdict(self.config).get('loss_path', None))
 
         # forward
         predicted_scene_embedding = self.embedding_net(object_features)
@@ -887,7 +887,7 @@ class CLGRCENV(gym.Env):
         self.change_line = 0
         self.num_of_envs = 0
         self.eval = asdict(config).get('eval', None)
-        torch.save(torch.tensor([0]), '/home/kit/Downloads/loss.pt')
+        torch.save(torch.tensor([0]), asdict(config).get('loss_path', None))
 
         import omni.isaac.core.utils.prims as prim_utils
 
@@ -1328,7 +1328,7 @@ class CLGRCENV(gym.Env):
 
         # object_features = self.prepare_input_data(objects, bbox_pose)
 
-        rl_loss = torch.load('/home/kit/Downloads/loss.pt')
+        rl_loss = torch.load(asdict(self.config).get('loss_path', None))
 
         # forward
         predicted_scene_embedding = self.embedding_net(object_features)
