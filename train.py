@@ -22,7 +22,7 @@ import gymnasium
 config = MainConfig()
 tuning = asdict(config).get('tuning', None)
 log_dir = asdict(config).get('train_log_dir', None)
-env = gymnasium.make("tasks:rlmodel-v1", config=config)
+env = gymnasium.make("tasks:rlmodel-v0", config=config)
 
 checkpoint_callback = CheckpointCallback(save_freq=5000, save_path=log_dir, name_prefix="last_chance115")
 
