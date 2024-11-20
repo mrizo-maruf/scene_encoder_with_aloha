@@ -555,7 +555,7 @@ class CLGRENV(gym.Env):
         self.change_line += 1
         reduce_r = 1
         reduce_phi = 1
-        if self.change_line >= self.repeat or self.eval:
+        if self.change_line >= self.repeat:
             reduce_r = np.random.rand()
             reduce_phi = np.random.rand()
             self.change_line=0
@@ -647,40 +647,40 @@ class CLGRENV(gym.Env):
 
         # to tensor
         return torch.tensor(features, dtype=torch.float32).to(self.device)  # Shape: (4, 390)
-
+    
     def get_graph_embedding(self):
-        self.stept += 1
-        if self.stept % 5000 == 0:
-            save_dir = "/home/kit/.local/share/ov/pkg/isaac-sim-4.1.0/standalone_examples/Aloha_graph/Aloha"
-            checkpoint_path = os.path.join(save_dir, f"scene_embedding_epoch_{self.stept}.pth")
-            torch.save(self.embedding_net.state_dict(), checkpoint_path)
-        if not self.eval:
-            scene_path = asdict(self.config).get('scene_file', None)
-            scene_file = os.path.join(scene_path, f"scene_{self.num_of_envs}.pkl")  # 替换为实际路径前缀
-        else:
-            scene_path = asdict(self.config).get('scene_test_file', None)
-            scene_file = os.path.join(scene_path, f"{self.num_of_envs}.pkl")  # 替换为实际路径前缀
-        
 
-        with open(scene_file, "rb") as f:
-            objects = pickle.load(f)
+        # Read Clip-embedding
+        scene_path = asdict(self.config).get('scene_file', None)
+        objects_path = os.path.join(scene_path, f"{self.num_of_envs}.pkl.gz")
+        with gzip.open(objects_path, "rb") as file:
+            objects = pickle.load(file)
 
-        # input feature (7, 518)
-        object_features = []
-        for obj_id, data in objects.items():
-            # get bbox_center and bbox_size
-            bbox_center = data["bbox_center"]  # (3,)
-            bbox_size = data["bbox_size"]      # (3,)
-            clip_embd = data["clip_embd"]      # (512,)
+        # Read bbox info
+        bbox_path = os.path.join(scene_path, f"{self.num_of_envs}.json")
+        with open(bbox_path, "r") as flie:
+            bbox_pose = json.load(flie)
+
+        features = []
+
+        for obj_index, obj_data in enumerate(objects["objects"]):
+            # 512
+            clip_descriptor = obj_data["clip_descriptor"]
+            
+            # to numpy
+            clip_descriptor = np.array(clip_descriptor)
+
+            # bbox_extent 和 bbox_center 
+            bbox_extent = np.array(bbox_pose[obj_index]["bbox_extent"])
+            bbox_center = np.array(bbox_pose[obj_index]["bbox_center"])
 
             # -->518
-            feature = np.concatenate([bbox_center, bbox_size, clip_embd])  # (3 + 3 + 512 = 518,)
-            object_features.append(feature)
+            object_feature = np.concatenate([clip_descriptor, bbox_extent, bbox_center])  # (512 + 3 + 3 = 518)
+            features.append(object_feature)
 
-        # to tensor (7, 518)
-        object_features = torch.tensor(object_features, dtype=torch.float32).to(self.device)  # (7, 518)
+        # to tensor (num_object, 518)
+        object_features = torch.tensor(features, dtype=torch.float32).to(self.device)  # (7, 518)
 
-        # object_features = self.prepare_input_data(objects, bbox_pose)
 
         rl_loss = torch.load(asdict(self.config).get('loss_path', None))
 
@@ -702,7 +702,65 @@ class CLGRENV(gym.Env):
             self.embedding_loss.backward()
             self.embedding_optimizer.step()
 
+
+
         return predicted_scene_embedding #32
+    
+    # def get_graph_embedding(self):
+    #     self.stept += 1
+    #     if self.stept % 5000 == 0:
+    #         save_dir = "/home/kit/.local/share/ov/pkg/isaac-sim-4.1.0/standalone_examples/Aloha_graph/Aloha"
+    #         checkpoint_path = os.path.join(save_dir, f"scene_embedding_epoch_{self.stept}.pth")
+    #         torch.save(self.embedding_net.state_dict(), checkpoint_path)
+    #     if self.eval:
+    #         scene_path = asdict(self.config).get('scene_file', None)
+    #         scene_file = os.path.join(scene_path, f"scene_{self.num_of_envs}.pkl")  # 替换为实际路径前缀
+    #     else:
+    #         scene_path = asdict(self.config).get('scene_test_file', None)
+    #         scene_file = os.path.join(scene_path, f"{self.num_of_envs}.pkl")  # 替换为实际路径前缀
+        
+
+    #     with open(scene_file, "rb") as f:
+    #         objects = pickle.load(f)
+
+    #     # input feature (7, 518)
+    #     object_features = []
+    #     for obj_id, data in objects.items():
+    #         # get bbox_center and bbox_size
+    #         bbox_center = data["bbox_center"]  # (3,)
+    #         bbox_size = data["bbox_size"]      # (3,)
+    #         clip_embd = data["clip_embd"]      # (512,)
+
+    #         # -->518
+    #         feature = np.concatenate([bbox_center, bbox_size, clip_embd])  # (3 + 3 + 512 = 518,)
+    #         object_features.append(feature)
+
+    #     # to tensor (7, 518)
+    #     object_features = torch.tensor(object_features, dtype=torch.float32).to(self.device)  # (7, 518)
+
+    #     # object_features = self.prepare_input_data(objects, bbox_pose)
+
+    #     rl_loss = torch.load(asdict(self.config).get('loss_path', None))
+
+    #     # forward
+    #     predicted_scene_embedding = self.embedding_net(object_features)
+
+    #     # define loss
+    #     if rl_loss.ndim == 0:  
+    #         rl_loss_value = rl_loss.to(self.device)
+    #     else:  
+    #         rl_loss_value = rl_loss[-1].to(self.device)
+
+    #     # rl_loss_value = torch.tensor(rl_loss[-1], dtype=torch.float32).to(self.device)
+    #     self.embedding_loss = torch.abs(torch.mean(predicted_scene_embedding) * rl_loss_value)
+
+    #     # gradient update
+    #     if not self.eval:
+    #         self.embedding_optimizer.zero_grad()
+    #         self.embedding_loss.backward()
+    #         self.embedding_optimizer.step()
+
+    #     return predicted_scene_embedding #32
 
     def render(self, mode="human"):
         return
@@ -1184,8 +1242,8 @@ class CLGRCENV(gym.Env):
                 )
         if self.eval:
             n = np.random.randint(2)
-            self.traning_angle = ((-1)**n)*np.pi/8#asdict(self.config).get('eval_angle', None),
-            self.traning_radius = 0.45# asdict(self.config).get('eval_radius', None),
+            self.traning_angle = ((-1)**n)*asdict(self.config).get('eval_angle', None)
+            self.traning_radius = asdict(self.config).get('eval_radius', None)
         else:
             self.traning_radius = self.amount_radius_change*self.max_traning_radius/self.max_amount_radius_change
             self.traning_angle = self.amount_angle_change*self.max_trining_angle/self.max_amount_angle_change
