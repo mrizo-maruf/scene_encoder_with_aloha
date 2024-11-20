@@ -497,7 +497,6 @@ class CLGRENV(gym.Env):
                       np.array([2.6258580684661865,-1.9797149896621704,0.7]),
                       np.array([2.2554433345794678,-1.4549099206924438,0.7]),
                       np.array([2.0932204723358154,-0.9349952340126038,0.7]),
-                      np.array([1.7827470302581787,-0.5929904580116272,0.7]),
                       np.array([2.1453826427459717,1.099216103553772,0.7]),
                       np.array([2.213555097579956,1.3844422101974487,0.7]),
                       np.array([2.3652637004852295,1.6736856698989868,0.7]),
@@ -514,9 +513,9 @@ class CLGRENV(gym.Env):
                       np.array([2.5751214027404785,2.1429364681243896,0.7]),
                       np.array([2.6092638969421387,2.336885690689087,0.7]),]
         if self.event == 0:
-            self.num_of_envs = np.random.choice([0,1,2,3,4,5])
+            self.num_of_envs = np.random.choice([0,1,2,3,4])
         elif self.event == 1:
-            self.num_of_envs = np.random.choice([6,8,9,10])
+            self.num_of_envs = np.random.choice([5,6,7,8,9])
         # self.num_of_envs
         if not self.eval:
             self.goal_position = poses_bowl[self.num_of_envs]
@@ -533,8 +532,10 @@ class CLGRENV(gym.Env):
                 )
         if self.eval:
             n = np.random.randint(2)
-            self.traning_angle = ((-1)**n)*asdict(self.config).get('eval_angle', None),
-            self.traning_radius = asdict(self.config).get('eval_radius', None),
+            phi =asdict(self.config).get('eval_angle', None)
+            r = asdict(self.config).get('eval_radius', None)
+            self.traning_angle = ((-1)**n)*phi
+            self.traning_radius = r
         else:
             self.traning_radius = self.amount_radius_change*self.max_traning_radius/self.max_amount_radius_change
             self.traning_angle = self.amount_angle_change*self.max_trining_angle/self.max_amount_angle_change
@@ -653,8 +654,13 @@ class CLGRENV(gym.Env):
             save_dir = "/home/kit/.local/share/ov/pkg/isaac-sim-4.1.0/standalone_examples/Aloha_graph/Aloha"
             checkpoint_path = os.path.join(save_dir, f"scene_embedding_epoch_{self.stept}.pth")
             torch.save(self.embedding_net.state_dict(), checkpoint_path)
-        scene_path = asdict(self.config).get('scene_file', None)
-        scene_file = os.path.join(scene_path, f"scene_{self.num_of_envs}.pkl")  # 替换为实际路径前缀
+        if not self.eval:
+            scene_path = asdict(self.config).get('scene_file', None)
+            scene_file = os.path.join(scene_path, f"scene_{self.num_of_envs}.pkl")  # 替换为实际路径前缀
+        else:
+            scene_path = asdict(self.config).get('scene_test_file', None)
+            scene_file = os.path.join(scene_path, f"{self.num_of_envs}.pkl")  # 替换为实际路径前缀
+        
 
         with open(scene_file, "rb") as f:
             objects = pickle.load(f)
@@ -1178,16 +1184,13 @@ class CLGRCENV(gym.Env):
                 )
         if self.eval:
             n = np.random.randint(2)
-            self.traning_angle = ((-1)**n)*asdict(self.config).get('eval_angle', None),
-            self.traning_radius = asdict(self.config).get('eval_radius', None),
+            self.traning_angle = ((-1)**n)*np.pi/8#asdict(self.config).get('eval_angle', None),
+            self.traning_radius = 0.45# asdict(self.config).get('eval_radius', None),
         else:
             self.traning_radius = self.amount_radius_change*self.max_traning_radius/self.max_amount_radius_change
             self.traning_angle = self.amount_angle_change*self.max_trining_angle/self.max_amount_angle_change
         print("self.traning_radius",  self.traning_radius)
         print("self.traning_angle", self.traning_angle)
-        if 0:
-            self.traning_angle = np.pi/8
-            self.traning_radius = 0.4
         if self.num_of_step > 0:
             self.change_reward_mode()
 
@@ -1214,8 +1217,8 @@ class CLGRCENV(gym.Env):
             elif self.event == 1:
                 target_pos += np.array([0.85,-0.65,0])
             
-            if self.traning_radius > 4:
-                target_pos += np.array([2,-y_goal,0])
+            # if self.traning_radius > 4:
+            #     target_pos += np.array([2,-y_goal,0])
 
             alpha = np.random.rand()*2*np.pi
             target_pos += reduce_r*self.traning_radius*np.array([np.cos(alpha), np.sin(alpha), 0])
