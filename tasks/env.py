@@ -261,7 +261,8 @@ class CLGRENV(gym.Env):
         self.embedding_net = SceneEmbeddingNetwork(object_feature_dim=518).to(device)
         self.embedding_net.to(self.device)
         self.embedding_net.load_state_dict(torch.load(asdict(self.config).get('load_emb_nn', None), map_location=device))
-        # self.embedding_optimizer = optim.Adam(self.embedding_net.parameters(), lr=0.001)
+        if not self.eval:
+            self.embedding_optimizer = optim.Adam(self.embedding_net.parameters(), lr=0.001)
 
     
     def get_success_rate(self, observation, terminated, sources, source="Nan"):
@@ -450,6 +451,7 @@ class CLGRENV(gym.Env):
             observations = self.get_observations()
             print("self.traning_radius",  self.traning_radius)
             print("self.traning_angle", self.traning_angle)
+            print("eval: ", self.eval)
             print(str(list(self.prev_SR.values())))
             info = {}
             truncated = False
@@ -501,12 +503,25 @@ class CLGRENV(gym.Env):
                       np.array([2.3652637004852295,1.6736856698989868,0.7]),
                       np.array([2.525071859359741,2.019548177719116,0.7]),
                       np.array([2.6450564861297607,2.3489251136779785,0.7]),]
+        poses_check_bowl = [np.array([2.7052321434020996,-2.2619035243988037,0.7]),
+                      np.array([2.552615165710449,-1.7984942197799683,0.7]),
+                      np.array([2.3862786293029785,-1.4699782133102417,0.7]),
+                      np.array([2.1094179153442383,-1.0277622938156128,0.7]),
+                      np.array([1.8545807600021362,-0.5845907926559448,0.7]),
+                      np.array([2.155369758605957,1.158652663230896,0.7]),
+                      np.array([2.331857681274414,1.4302781820297241,0.7]),
+                      np.array([2.350813388824463,1.7375775575637817,0.7]),
+                      np.array([2.5751214027404785,2.1429364681243896,0.7]),
+                      np.array([2.6092638969421387,2.336885690689087,0.7]),]
         if self.event == 0:
             self.num_of_envs = np.random.choice([0,1,2,3,4,5])
         elif self.event == 1:
             self.num_of_envs = np.random.choice([6,8,9,10])
         # self.num_of_envs
-        self.goal_position = poses_bowl[self.num_of_envs]
+        if not self.eval:
+            self.goal_position = poses_bowl[self.num_of_envs]
+        else:
+            self.goal_position = poses_check_bowl[self.num_of_envs]
         if 0:
             self.goal_cube.set_world_pose(self.goal_position)
         else:
@@ -523,11 +538,9 @@ class CLGRENV(gym.Env):
         else:
             self.traning_radius = self.amount_radius_change*self.max_traning_radius/self.max_amount_radius_change
             self.traning_angle = self.amount_angle_change*self.max_trining_angle/self.max_amount_angle_change
+        print("eval reset: ", self.eval)
         print("self.traning_radius",  self.traning_radius)
         print("self.traning_angle", self.traning_angle)
-        if 1:
-            self.traning_angle = np.pi/8
-            self.traning_radius = 0.4
         if self.num_of_step > 0:
             self.change_reward_mode()
 
@@ -678,9 +691,10 @@ class CLGRENV(gym.Env):
         self.embedding_loss = torch.abs(torch.mean(predicted_scene_embedding) * rl_loss_value)
 
         # gradient update
-        # self.embedding_optimizer.zero_grad()
-        # self.embedding_loss.backward()
-        # self.embedding_optimizer.step()
+        if not self.eval:
+            self.embedding_optimizer.zero_grad()
+            self.embedding_loss.backward()
+            self.embedding_optimizer.step()
 
         return predicted_scene_embedding #32
 
