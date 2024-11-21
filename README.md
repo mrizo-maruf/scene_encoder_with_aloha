@@ -1,5 +1,5 @@
 # Установка:
-1. Скачать папки assets and model по ссылке https://disk.yandex.com/d/HlCCxiESonoKzQ в проект.
+1. Скачать папки assets, model и scene по ссылке https://disk.yandex.com/d/HlCCxiESonoKzQ в репозиторий.
 2. Установить необходимые модули:
    ```
    ./python.sh -m pip install ftfy regex tqdmip
