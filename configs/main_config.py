@@ -8,8 +8,8 @@ general_path = str(d) + "/standalone_examples/Aloha_graph/Aloha"
 
 @dataclass
 class MainConfig:
-    tuning: bool = False
-    headless: bool = False
+    tuning: bool = True
+    headless: bool = True
     reward_mode: int = 1
     cup_usd_path: str = general_path + "/assets/objects/bowl.usd"
     jetbot_asset_path: str = general_path + "/assets/aloha/ALOHA_with_sensor_02.usd"
@@ -19,7 +19,7 @@ class MainConfig:
     goal_image_path: str = general_path + '/img/goal.png'
     goalb_image_path: str = general_path + '/img/goal_bowl.png'
     train_log_dir: str = general_path + "/models/SAC"
-    load_policy: str = general_path + "/models/SAC/last_chance119_175000_steps.zip"
+    load_policy: str = general_path + "/models/SAC/GRM_v1p2f0_85000_steps.zip"
     log_path: str = general_path + "/log.txt"
     camera_usd_local_path = general_path + '/assets/aloha/aloloha_v03_cameras.usd'
     camera_image_saved_path = general_path + "/img/"
@@ -28,6 +28,6 @@ class MainConfig:
     training_mode:int = 0
     scene_file_test: str = general_path + "/scene/scene_test/"
     scene_file_train: str = general_path + "/scene/scene_train/"
-    eval:bool = True
-    eval_radius:float = 0.55
+    eval:bool = False
+    eval_radius:float = 0.6
     eval_angle:float = np.pi/6
