@@ -222,12 +222,13 @@ class CLGRENV(gym.Env):
         self.local_reward_mode = 0
         self.delay_change_RM = 0
         self.prev_SR = {}
-        self._test = test
         self.log_path = asdict(config).get('log_path', None)
 
         self.training_mode = asdict(config).get('training_mode', None)
         self.local_training_mode = 0
         self.traning_radius = 0
+        self.traning_radius_start = 1.1
+        self.traning_angle_start = 0
         self.trining_delta_angle = 0
         self.max_traning_radius = 4
         self.max_trining_angle = np.pi/6
@@ -240,6 +241,7 @@ class CLGRENV(gym.Env):
         self.num_of_envs = 0
         self.eval = asdict(config).get('eval', None)
         torch.save(torch.tensor([0]), asdict(config).get('loss_path', None))
+        self.learn_emb = 1
 
         import omni.isaac.core.utils.prims as prim_utils
 
@@ -261,7 +263,7 @@ class CLGRENV(gym.Env):
         self.embedding_net = SceneEmbeddingNetwork(object_feature_dim=518).to(device)
         self.embedding_net.to(self.device)
         self.embedding_net.load_state_dict(torch.load(asdict(self.config).get('load_emb_nn', None), map_location=device))
-        if not self.eval:
+        if not self.eval or self.learn_emb:
             self.embedding_optimizer = optim.Adam(self.embedding_net.parameters(), lr=0.001)
 
     
@@ -447,42 +449,39 @@ class CLGRENV(gym.Env):
         return
 
     def step(self, action):
-        if not self._test:
-            observations = self.get_observations()
-            print("self.traning_radius",  self.traning_radius)
-            print("self.traning_angle", self.traning_angle)
-            print("eval: ", self.eval)
-            print(str(list(self.prev_SR.values())))
-            info = {}
-            truncated = False
-            terminated = False
+        observations = self.get_observations()
+        print("self.traning_radius",  self.traning_radius)
+        print("self.traning_angle", self.traning_angle)
+        print("eval: ", self.eval)
+        print(str(list(self.prev_SR.values())))
+        info = {}
+        truncated = False
+        terminated = False
 
-            previous_jetbot_position, previous_jetbot_orientation = self.jetbot.get_world_pose()
-            self.move(action)
+        previous_jetbot_position, previous_jetbot_orientation = self.jetbot.get_world_pose()
+        self.move(action)
 
-            gt_observations = self.get_gt_observations(previous_jetbot_position, previous_jetbot_orientation)
-            reward, terminated, truncated = self.get_reward(gt_observations)
-            sources = ["time_out", "collision", "Nan"]
-            source = "Nan"
+        gt_observations = self.get_gt_observations(previous_jetbot_position, previous_jetbot_orientation)
+        reward, terminated, truncated = self.get_reward(gt_observations)
+        sources = ["time_out", "collision", "Nan"]
+        source = "Nan"
 
-            if not terminated:
-                if self._is_timeout():
-                    truncated = False
-                    reward = reward - 4
-                    source = sources[0]
-                if self._is_collision() and self._get_current_time() > 2*self._skip_frame:
-                    truncated = True
-                    reward = reward - 5
-                    source = sources[1]
-            
-            if terminated or truncated:
-                self.get_success_rate(gt_observations, terminated, sources, source)
-                self.start_step = True
-                reward -= self._get_punish_time()
+        if not terminated:
+            if self._is_timeout():
+                truncated = False
+                reward = reward - 4
+                source = sources[0]
+            if self._is_collision() and self._get_current_time() > 2*self._skip_frame:
+                truncated = True
+                reward = reward - 5
+                source = sources[1]
+        
+        if terminated or truncated:
+            self.get_success_rate(gt_observations, terminated, sources, source)
+            self.start_step = True
+            reward -= self._get_punish_time()
 
-            return observations, reward, terminated, truncated, info
-        else:
-            return self.test(action)
+        return observations, reward, terminated, truncated, info
 
 
     def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None):
@@ -537,8 +536,8 @@ class CLGRENV(gym.Env):
             self.traning_angle = ((-1)**n)*phi
             self.traning_radius = r
         else:
-            self.traning_radius = self.amount_radius_change*self.max_traning_radius/self.max_amount_radius_change
-            self.traning_angle = self.amount_angle_change*self.max_trining_angle/self.max_amount_angle_change
+            self.traning_radius = self.traning_radius_start + self.amount_radius_change*self.max_traning_radius/self.max_amount_radius_change
+            self.traning_angle = self.traning_angle_start + self.amount_angle_change*self.max_trining_angle/self.max_amount_angle_change
         print("eval reset: ", self.eval)
         print("self.traning_radius",  self.traning_radius)
         print("self.traning_angle", self.traning_angle)
@@ -564,9 +563,9 @@ class CLGRENV(gym.Env):
             k += 1
             target_pos = np.array([x_goal, y_goal, 0.1])
             if self.event == 0:
-                target_pos += np.array([0.85,0.65,0])
+                target_pos += np.array([0,0,0])
             elif self.event == 1:
-                target_pos += np.array([0.85,-0.65,0])
+                target_pos += np.array([0,0,0])
             
             if self.traning_radius > 4:
                 target_pos += np.array([2,-y_goal,0])
@@ -582,10 +581,11 @@ class CLGRENV(gym.Env):
             cos_angle = np.dot(to_goal_vec, nx) / np.linalg.norm(to_goal_vec) / np.linalg.norm(nx)
             
             quadrant = self.get_quadrant(nx, ny, to_goal_vec)
-            if target_pos[1]>=-2.4 and target_pos[1]<=2.4 and target_pos[0]>=1.8 and ((target_pos[1]<=-0.6 and target_pos[0]>-2*target_pos[1]-3) or (target_pos[1]>=0.6 and target_pos[0]>2*target_pos[1]-3) or target_pos[0]>=1.8):
+            if target_pos[1]>=-2.3 and target_pos[1]<=2.3 and target_pos[0]>=2.2 and ((target_pos[1]<=-0 and target_pos[0]>-target_pos[1]*0.572+2.35) 
+                                                                                      or (target_pos[1]>=0 and target_pos[0]>target_pos[1]*0.285+2.35)):
                 n = np.random.randint(2)
                 return target_pos, quadrant*np.arccos(cos_angle) + ((-1)**n)*reduce_phi*self.traning_angle
-            elif k >= 50:
+            elif k >= 100:
                 print("can't get correct robot position: ", target_pos, quadrant*np.arccos(cos_angle) + reduce_phi*self.traning_angle, reduce_r)
             
 
@@ -697,7 +697,7 @@ class CLGRENV(gym.Env):
             self.embedding_loss = torch.abs(torch.mean(predicted_scene_embedding) * rl_loss_value)
 
             # gradient update
-            if not self.eval:
+            if not self.eval or self.learn_emb:
                 self.embedding_optimizer.zero_grad()
                 self.embedding_loss.backward()
                 self.embedding_optimizer.step()
@@ -947,7 +947,6 @@ class CLGRCENV(gym.Env):
         self.local_reward_mode = 0
         self.delay_change_RM = 0
         self.prev_SR = {}
-        self._test = test
         self.log_path = asdict(config).get('log_path', None)
 
         self.training_mode = asdict(config).get('training_mode', None)
@@ -965,7 +964,8 @@ class CLGRCENV(gym.Env):
         self.num_of_envs = 0
         self.eval = asdict(config).get('eval', None)
         torch.save(torch.tensor([0]), asdict(config).get('loss_path', None))
-
+        self.t = 0
+        self.traning_radius_start = 1.1
         import omni.isaac.core.utils.prims as prim_utils
 
         light_1 = prim_utils.create_prim(
@@ -978,7 +978,7 @@ class CLGRCENV(gym.Env):
                 "inputs:color": (1.0, 1.0, 1.0)
             }
 )
-        self.init_embedding_nn()
+        # self.init_embedding_nn()
 
         return
     def init_embedding_nn(self):
@@ -1169,41 +1169,38 @@ class CLGRCENV(gym.Env):
         return
 
     def step(self, action):
-        if not self._test:
-            observations = self.get_observations()
-            print("self.traning_radius",  self.traning_radius)
-            print("self.traning_angle", self.traning_angle)
-            print(str(list(self.prev_SR.values())))
-            info = {}
-            truncated = False
-            terminated = False
+        observations = self.get_observations()
+        print("self.traning_radius",  self.traning_radius)
+        print("self.traning_angle", self.traning_angle)
+        print(str(list(self.prev_SR.values())))
+        info = {}
+        truncated = False
+        terminated = False
 
-            previous_jetbot_position, previous_jetbot_orientation = self.jetbot.get_world_pose()
-            self.move(action)
+        previous_jetbot_position, previous_jetbot_orientation = self.jetbot.get_world_pose()
+        self.move(action)
 
-            gt_observations = self.get_gt_observations(previous_jetbot_position, previous_jetbot_orientation)
-            reward, terminated, truncated = self.get_reward(gt_observations)
-            sources = ["time_out", "collision", "Nan"]
-            source = "Nan"
+        gt_observations = self.get_gt_observations(previous_jetbot_position, previous_jetbot_orientation)
+        reward, terminated, truncated = self.get_reward(gt_observations)
+        sources = ["time_out", "collision", "Nan"]
+        source = "Nan"
 
-            if not terminated:
-                if self._is_timeout():
-                    truncated = False
-                    reward = reward - 4
-                    source = sources[0]
-                if self._is_collision() and self._get_current_time() > 2*self._skip_frame:
-                    truncated = True
-                    reward = reward - 5
-                    source = sources[1]
-            
-            if terminated or truncated:
-                self.get_success_rate(gt_observations, terminated, sources, source)
-                self.start_step = True
-                reward -= self._get_punish_time()
-
-            return observations, reward, terminated, truncated, info
-        else:
-            return self.test(action)
+        if not terminated:
+            if self._is_timeout():
+                truncated = False
+                reward = reward - 4
+                source = sources[0]
+            if self._is_collision() and self._get_current_time() > 2*self._skip_frame:
+                truncated = True
+                reward = reward - 5
+                source = sources[1]
+        
+        if terminated or truncated:
+            self.get_success_rate(gt_observations, terminated, sources, source)
+            self.start_step = True
+            reward -= self._get_punish_time()
+        print("start",self.traning_radius_start)
+        return observations, reward, terminated, truncated, info
 
 
     def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None):
@@ -1218,17 +1215,25 @@ class CLGRCENV(gym.Env):
                       np.array([2.6258580684661865,-1.9797149896621704,0.7]),
                       np.array([2.2554433345794678,-1.4549099206924438,0.7]),
                       np.array([2.0932204723358154,-0.9349952340126038,0.7]),
-                      np.array([1.7827470302581787,-0.5929904580116272,0.7]),
                       np.array([2.1453826427459717,1.099216103553772,0.7]),
                       np.array([2.213555097579956,1.3844422101974487,0.7]),
                       np.array([2.3652637004852295,1.6736856698989868,0.7]),
                       np.array([2.525071859359741,2.019548177719116,0.7]),
                       np.array([2.6450564861297607,2.3489251136779785,0.7]),]
         if self.event == 0:
-            self.num_of_envs = np.random.choice([0,1,2,3,4,5])
+            self.num_of_envs = np.random.choice([0,1,2,3])
         elif self.event == 1:
-            self.num_of_envs = np.random.choice([6,8,9,10])
-        # self.num_of_envs
+            self.num_of_envs = np.random.choice([5,6,7,8,9])
+        # self.num_of_envs = self.t
+        
+        # if self.t >= len(poses_bowl)-1:
+        #     self.t = 0
+        #     # self.traning_radius_start -= 0.05
+        # else:
+        #     self.t += 1
+        # print("t:", self.t)
+        # print("start",self.traning_radius_start)
+
         self.goal_position = poses_bowl[self.num_of_envs]
         if 0:
             self.goal_cube.set_world_pose(self.goal_position)
@@ -1244,7 +1249,7 @@ class CLGRCENV(gym.Env):
             self.traning_angle = ((-1)**n)*asdict(self.config).get('eval_angle', None)
             self.traning_radius = asdict(self.config).get('eval_radius', None)
         else:
-            self.traning_radius = self.amount_radius_change*self.max_traning_radius/self.max_amount_radius_change
+            self.traning_radius = self.traning_radius_start + self.amount_radius_change*self.max_traning_radius/self.max_amount_radius_change
             self.traning_angle = self.amount_angle_change*self.max_trining_angle/self.max_amount_angle_change
         print("self.traning_radius",  self.traning_radius)
         print("self.traning_angle", self.traning_angle)
@@ -1252,6 +1257,9 @@ class CLGRCENV(gym.Env):
             self.change_reward_mode()
 
         new_pos, new_angle = self.get_position(self.goal_position[0], self.goal_position[1])
+        # new_pos=[2.8022,1.4589,0.1]
+        # new_pos=[5,-2.2,0.1]
+        print("pos", new_pos, new_angle, self.num_of_envs)
         self.jetbot.set_world_pose(new_pos ,get_quaternion_from_euler(new_angle))
         observations = self.get_observations()
         return observations, info
@@ -1261,18 +1269,18 @@ class CLGRCENV(gym.Env):
         self.change_line += 1
         reduce_r = 1
         reduce_phi = 1
-        if self.change_line >= self.repeat or self.eval:
-            reduce_r = np.random.rand()
-            reduce_phi = np.random.rand()
-            self.change_line=0
+        # if self.change_line >= self.repeat or self.eval:
+        #     reduce_r = np.random.rand()
+        #     reduce_phi = np.random.rand()
+        #     self.change_line=0
         print("reduce", reduce_r)
         while 1:
             k += 1
             target_pos = np.array([x_goal, y_goal, 0.1])
             if self.event == 0:
-                target_pos += np.array([0.85,0.65,0])
+                target_pos += np.array([0,0,0])
             elif self.event == 1:
-                target_pos += np.array([0.85,-0.65,0])
+                target_pos += np.array([0,0,0])
             
             # if self.traning_radius > 4:
             #     target_pos += np.array([2,-y_goal,0])
@@ -1288,11 +1296,13 @@ class CLGRCENV(gym.Env):
             cos_angle = np.dot(to_goal_vec, nx) / np.linalg.norm(to_goal_vec) / np.linalg.norm(nx)
             
             quadrant = self.get_quadrant(nx, ny, to_goal_vec)
-            if target_pos[1]>=-2.4 and target_pos[1]<=2.4 and target_pos[0]>=1.8 and ((target_pos[1]<=-0.6 and target_pos[0]>-2*target_pos[1]-3) or (target_pos[1]>=0.6 and target_pos[0]>2*target_pos[1]-3) or target_pos[0]>=1.8):
+            if target_pos[1]>=-2.3 and target_pos[1]<=2.3 and target_pos[0]>=2.2 and ((target_pos[1]<=-0 and target_pos[0]>-target_pos[1]*0.572+2.35) 
+                                                                                      or (target_pos[1]>=0 and target_pos[0]>target_pos[1]*0.285+2.35)):
                 n = np.random.randint(2)
                 return target_pos, quadrant*np.arccos(cos_angle) + ((-1)**n)*reduce_phi*self.traning_angle
-            elif k >= 50:
-                print("can't get correct robot position: ", target_pos, quadrant*np.arccos(cos_angle) + reduce_phi*self.traning_angle, reduce_r)
+            elif k >= 100:
+                pass
+                # print("can't get correct robot position: ", target_pos, quadrant*np.arccos(cos_angle) + reduce_phi*self.traning_angle, reduce_r, self.num_of_envs)
             
 
     def get_observations(self):
@@ -1339,10 +1349,10 @@ class CLGRCENV(gym.Env):
         text = clip.tokenize([s]).to(self.device)
         with torch.no_grad():
             text_features = self.clip_model.encode_text(text)
-        graph_embedding = self.get_graph_embedding()
+        # graph_embedding = self.get_graph_embedding()
         # with torch.no_grad():
         #     graph_embedding = graph
-        print("embedding ", type(graph_embedding))
+        # print("embedding ", type(graph_embedding))
 
         return np.concatenate(
             [
