@@ -8,7 +8,7 @@ general_path = str(d) + "/standalone_examples/Aloha_graph/Aloha"
 
 @dataclass
 class MainConfig:
-    tuning: bool = True
+    tuning: bool = False
     headless: bool = True
     reward_mode: int = 1
     cup_usd_path: str = general_path + "/assets/objects/bowl.usd"
@@ -19,15 +19,17 @@ class MainConfig:
     goal_image_path: str = general_path + '/img/goal.png'
     goalb_image_path: str = general_path + '/img/goal_bowl.png'
     train_log_dir: str = general_path + "/models/SAC"
-    load_policy: str = general_path + "/models/SAC/GRM_v1p2f0_85000_steps.zip"
-    log_path: str = general_path + "/log.txt"
+    log_path: str = general_path + "/logs/log.txt"
     camera_usd_local_path = general_path + '/assets/aloha/aloloha_v03_cameras.usd'
     camera_image_saved_path = general_path + "/img/"
     loss_path:str = general_path+'/loss.pt'
-    load_emb_nn:str = general_path + "/scene_embedding_epoch_180000.pth"
+    load_emb_nn:str = general_path + "/emb_models/scene_embedding_epoch_465000.pth"
     training_mode:int = 0
     scene_file_test: str = general_path + "/scene/scene_test/"
     scene_file_train: str = general_path + "/scene/scene_train/"
+    load_policy: str = general_path + "/models/SAC/GRMC_v0p0f0_130000_stepsold.zip"
     eval:bool = False
-    eval_radius:float = 0.6
-    eval_angle:float = np.pi/6
+    eval_radius:float = 0
+    eval_angle:float = 0
+    eval_print:bool = False
+    eval_log_path: str = general_path + "/logs/eval_log.txt"
