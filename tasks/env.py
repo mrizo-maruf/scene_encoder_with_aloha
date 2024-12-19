@@ -192,7 +192,7 @@ class CLGRENV(gym.Env):
 
         self.max_velocity = 1.2
         self.max_angular_velocity = math.pi*0.4
-        self.events = [0, 1]#[0, 1, 2]
+        self.events = [0]#[0, 1, 2]
         self.event = 0
 
         convert_tensor = transforms.ToTensor()
@@ -241,9 +241,25 @@ class CLGRENV(gym.Env):
         self.num_of_envs = 0
         self.eval = asdict(config).get('eval', None)
         torch.save(torch.tensor([0]), asdict(config).get('loss_path', None))
-        self.learn_emb = 1
+        self.learn_emb = 0
+        self.current_jetbot_position = np.array([0,0])
 
         import omni.isaac.core.utils.prims as prim_utils
+
+        self.evalp = asdict(config).get('eval_print', None)
+        self.eval_log_path = asdict(config).get('eval_log_path', None)
+        self.eval_r = 0.2
+        self.eval_angle = 0
+        self.eval_dt = 0.2
+        self.eval_dangle = np.pi/18
+        self.eval_step = 0
+        self.eval_step_angle = 0
+        self.eval_sr = []
+        self.eval_write = 0
+        self.SR_len = 10
+        self.SR_t = 0
+
+        self.tuning = asdict(config).get('tuning', None)
 
         light_1 = prim_utils.create_prim(
             "/World/Light_1",
@@ -263,7 +279,7 @@ class CLGRENV(gym.Env):
         self.embedding_net = SceneEmbeddingNetwork(object_feature_dim=518).to(device)
         self.embedding_net.to(self.device)
         self.embedding_net.load_state_dict(torch.load(asdict(self.config).get('load_emb_nn', None), map_location=device))
-        if not self.eval or self.learn_emb:
+        if (not self.eval and not self.evalp) or self.learn_emb:
             self.embedding_optimizer = optim.Adam(self.embedding_net.parameters(), lr=0.001)
 
     
@@ -357,6 +373,7 @@ class CLGRENV(gym.Env):
         goal_world_position[2] = 0
 
         current_dist_to_goal = np.linalg.norm(goal_world_position[0:2] - current_jetbot_position[0:2])
+        self.current_jetbot_position = current_jetbot_position[0:2]
 
         nx = np.array([-1,0])
         ny = np.array([0,1])
@@ -389,6 +406,8 @@ class CLGRENV(gym.Env):
                 print("distrib SR", list(self.prev_SR.values()))
                 self.log(str(list(self.prev_SR.values())) + str(self.num_of_step))
                 if all(np.array(list(self.prev_SR.values())) > 0.85):
+                    self.SR_t += 1
+                if self.SR_t >= self.SR_len: 
                     if not self.amount_angle_change >= self.max_amount_angle_change:
                         self.amount_angle_change += 1
                     elif not self.amount_radius_change >= self.max_amount_radius_change:
@@ -396,6 +415,7 @@ class CLGRENV(gym.Env):
                         self.amount_angle_change = 0
                     self.log("training mode up to " + str(self.training_mode) + " step: " + str(self.num_of_step) + " radius " + str(self.traning_radius))
                     self.delay_change_RM = 0
+                    self.SR_t = 0
 
     def _get_terminated(self, observation, RM):
         achievements = dict.fromkeys(self.reward_modes, False)
@@ -480,6 +500,19 @@ class CLGRENV(gym.Env):
             self.get_success_rate(gt_observations, terminated, sources, source)
             self.start_step = True
             reward -= self._get_punish_time()
+            if self.evalp:
+                s = 0
+                if terminated:
+                    s = 1
+                self.eval_sr.append(s)
+                if self.eval_write:
+                    self.eval_write = 0
+                    sr = sum(self.eval_sr) / len(self.eval_sr)
+                    message = "r: " + str(round(self.traning_radius, 2)) + " a: " + str(round(self.traning_angle,2)) + " s: " + str(round(sr,2))
+                    self.eval_sr = []
+                    f = open(self.eval_log_path, "a+")
+                    f.write(message + "\n")
+                    f.close()
 
         return observations, reward, terminated, truncated, info
 
@@ -512,14 +545,15 @@ class CLGRENV(gym.Env):
                       np.array([2.5751214027404785,2.1429364681243896,0.7]),
                       np.array([2.6092638969421387,2.336885690689087,0.7]),]
         if self.event == 0:
-            self.num_of_envs = np.random.choice([0,1,2,3,4])
+            self.num_of_envs = np.random.choice([1,2,3,4])
         elif self.event == 1:
             self.num_of_envs = np.random.choice([5,6,7,8,9])
         # self.num_of_envs
-        if not self.eval:
+        if not self.eval and not self.evalp:
             self.goal_position = poses_bowl[self.num_of_envs]
         else:
             self.goal_position = poses_check_bowl[self.num_of_envs]
+        self.goal_position = poses_bowl[self.num_of_envs]
         if 0:
             self.goal_cube.set_world_pose(self.goal_position)
         else:
@@ -535,9 +569,27 @@ class CLGRENV(gym.Env):
             r = asdict(self.config).get('eval_radius', None)
             self.traning_angle = ((-1)**n)*phi
             self.traning_radius = r
+        elif self.evalp:
+            n = np.random.randint(2)
+            phi = self.eval_step_angle*self.eval_dangle
+            r_start = asdict(self.config).get('eval_radius', None)
+            r = r_start+self.eval_step*self.eval_dt
+            self.traning_angle = ((-1)**n)*phi
+            self.traning_radius = r
+            step_angle_update = 20
+            if (self.num_of_step % (step_angle_update-1) == 0) and self.num_of_step > 1:
+                self.eval_write = 1
+            if self.num_of_step % step_angle_update == 0:
+                self.eval_step_angle += 1
+            if self.max_trining_angle + np.pi/9 < phi:
+                self.eval_step_angle = 0
+                self.eval_step += 1
         else:
-            self.traning_radius = self.traning_radius_start + self.amount_radius_change*self.max_traning_radius/self.max_amount_radius_change
-            self.traning_angle = self.traning_angle_start + self.amount_angle_change*self.max_trining_angle/self.max_amount_angle_change
+            start_r = 0
+            if self.tuning:
+                start_r = asdict(self.config).get('eval_radius', None)
+            self.traning_radius = start_r + self.amount_radius_change*self.max_traning_radius/self.max_amount_radius_change
+            self.traning_angle = self.amount_angle_change*self.max_trining_angle/self.max_amount_angle_change
         print("eval reset: ", self.eval)
         print("self.traning_radius",  self.traning_radius)
         print("self.traning_angle", self.traning_angle)
@@ -554,6 +606,8 @@ class CLGRENV(gym.Env):
         self.change_line += 1
         reduce_r = 1
         reduce_phi = 1
+        track_width = 1.2
+        pos_obstacles = np.array([[3.675,-0.8],[4,1]])
         if self.change_line >= self.repeat:
             reduce_r = np.random.rand()
             reduce_phi = np.random.rand()
@@ -566,12 +620,9 @@ class CLGRENV(gym.Env):
                 target_pos += np.array([0,0,0])
             elif self.event == 1:
                 target_pos += np.array([0,0,0])
-            
-            if self.traning_radius > 4:
-                target_pos += np.array([2,-y_goal,0])
 
             alpha = np.random.rand()*2*np.pi
-            target_pos += reduce_r*self.traning_radius*np.array([np.cos(alpha), np.sin(alpha), 0])
+            target_pos += (self.traning_radius_start + reduce_r*(self.traning_radius))*np.array([np.cos(alpha), np.sin(alpha), 0])
 
             goal_world_position = np.array([x_goal, y_goal])
             nx = np.array([-1,0])
@@ -581,13 +632,21 @@ class CLGRENV(gym.Env):
             cos_angle = np.dot(to_goal_vec, nx) / np.linalg.norm(to_goal_vec) / np.linalg.norm(nx)
             
             quadrant = self.get_quadrant(nx, ny, to_goal_vec)
-            if target_pos[1]>=-2.3 and target_pos[1]<=2.3 and target_pos[0]>=2.2 and ((target_pos[1]<=-0 and target_pos[0]>-target_pos[1]*0.572+2.35) 
-                                                                                      or (target_pos[1]>=0 and target_pos[0]>target_pos[1]*0.285+2.35)):
+            if target_pos[1]>=-2.3 and target_pos[1]<=2.3 and target_pos[0]>=2.2 and ((target_pos[1]<=-0 and target_pos[0]>-target_pos[1]*0.572+2.35)
+                        or (target_pos[1]>=0 and target_pos[0]>target_pos[1]*0.285+2.35)) and (np.abs(target_pos[1] - goal_world_position[1]) < track_width) and self.no_intersect_with_obstacles(target_pos[0:2],pos_obstacles,0.83):
                 n = np.random.randint(2)
                 return target_pos, quadrant*np.arccos(cos_angle) + ((-1)**n)*reduce_phi*self.traning_angle
             elif k >= 100:
-                print("can't get correct robot position: ", target_pos, quadrant*np.arccos(cos_angle) + reduce_phi*self.traning_angle, reduce_r)
+                pass
+                # print("can't get correct robot position: ", target_pos, quadrant*np.arccos(cos_angle) + reduce_phi*self.traning_angle, reduce_r, self.num_of_envs)
             
+    def no_intersect_with_obstacles(self, target_pos,pos_obstacles,r):
+        interect = True
+        for pos_obstacle in pos_obstacles:
+            if  np.abs(np.linalg.norm(pos_obstacle - target_pos)) < r:
+                print(np.linalg.norm(pos_obstacle - target_pos))
+                interect = False
+        return interect         
 
     def get_observations(self):
         self._my_world.render()
@@ -648,118 +707,90 @@ class CLGRENV(gym.Env):
         # to tensor
         return torch.tensor(features, dtype=torch.float32).to(self.device)  # Shape: (4, 390)
     
+    # def get_graph_embedding(self):
+    #     # Read Clip-embedding
+    #     if not self.eval and not self.evalp:
+    #         self.stept += 1
+    #         if self.stept % 5000 == 0:
+    #             save_dir = "/home/kit/.local/share/ov/pkg/isaac-sim-4.1.0/standalone_examples/Aloha_graph/Aloha/emb_models"
+    #             checkpoint_path = os.path.join(save_dir, f"scene_embedding_epoch_{self.stept}.pth")
+    #             torch.save(self.embedding_net.state_dict(), checkpoint_path)
+
+    #     pkl_path = "/home/kit/.local/share/ov/pkg/isaac-sim-4.1.0/standalone_examples/Aloha_graph/Aloha/emb_g/clip.pkl"
+    #     with open(pkl_path, "rb") as file:
+    #         objects = pickle.load(file)
+
+    #     # Read bbox info
+    #     bbox_path = "/home/kit/.local/share/ov/pkg/isaac-sim-4.1.0/standalone_examples/Aloha_graph/Aloha/emb_g/json.json"
+    #     with open(bbox_path, "r") as flie:
+    #         bbox_pose = json.load(flie)
+
+    #     features = []
+        
+    #     id_order = [7, 0, 1, 2, 8]
+    #     for target_id in id_order:
+    #         for item in bbox_pose:
+    #             if item["id"] == target_id:
+    #                 clip_descriptor = objects[str(target_id)]
+    #                 bbox_extent = np.array([item['size']["x"], item['size']["y"], item['size']["z"]])
+    #                 if target_id == 8:
+    #                     bbox_center = self.goal_position
+    #                 else:
+    #                     bbox_center = np.array([item['center']['position']["x"], item['center']['position']["y"], item['center']['position']["z"]])
+    #                 object_feature = np.concatenate([clip_descriptor, bbox_extent, bbox_center])  # (512 + 3 + 3 = 518)
+    #                 features.append(object_feature)
+
+    #     # to tensor (num_object, 518)
+    #     object_features = torch.tensor(features, dtype=torch.float32).to(self.device)  # (7, 518)
+
+
+    #     rl_loss = torch.load(asdict(self.config).get('loss_path', None))
+
+    #     # forward
+    #     predicted_scene_embedding = self.embedding_net(object_features)
+
+    #     # define loss
+    #     if rl_loss.ndim == 0:  
+    #         rl_loss_value = rl_loss.to(self.device)
+    #     else:  
+    #         rl_loss_value = rl_loss[-1].to(self.device)
+
+    #     # rl_loss_value = torch.tensor(rl_loss[-1], dtype=torch.float32).to(self.device)
+    #     self.embedding_loss = torch.abs(torch.mean(predicted_scene_embedding) * rl_loss_value)
+
+    #     # gradient update
+    #     if (not self.eval and not self.evalp) or self.learn_emb:
+    #         self.embedding_optimizer.zero_grad()
+    #         self.embedding_loss.backward()
+    #         self.embedding_optimizer.step()
+
+    #     return predicted_scene_embedding #32
     def get_graph_embedding(self):
-        # Read Clip-embedding
-        if self.eval:
-            scene_path = asdict(self.config).get('scene_file_test', None)
-            objects_path = os.path.join(scene_path, f"{self.num_of_envs}.pkl.gz")
-            with gzip.open(objects_path, "rb") as file:
-                objects = pickle.load(file)
+        scene_path = asdict(self.config).get('scene_file_train', None)
+        scene_file = os.path.join(scene_path, f"{self.num_of_envs}.pkl")
 
-            # Read bbox info
-            bbox_path = os.path.join(scene_path, f"{self.num_of_envs}.json")
-            with open(bbox_path, "r") as flie:
-                bbox_pose = json.load(flie)
+        with open(scene_file, "rb") as f:
+            objects = pickle.load(f)
 
-            features = []
+        # input feature (7, 518)
+        object_features = []
+        for obj_id, data in objects.items():
+            # get bbox_center and bbox_size
+            bbox_center = data["bbox_center"]  # (3,)
+            bbox_size = data["bbox_size"]      # (3,)
+            clip_embd = data["clip_embd"]      # (512,)
 
-            for obj_index, obj_data in enumerate(objects["objects"]):
-                # 512
-                clip_descriptor = obj_data["clip_descriptor"]
-                
-                # to numpy
-                clip_descriptor = np.array(clip_descriptor)
+            # -->518
+            feature = np.concatenate([bbox_center, bbox_size, clip_embd])  # (3 + 3 + 512 = 518,)
+            object_features.append(feature)
 
-                # bbox_extent 和 bbox_center 
-                bbox_extent = np.array(bbox_pose[obj_index]["bbox_extent"])
-                bbox_center = np.array(bbox_pose[obj_index]["bbox_center"])
+        # to tensor (7, 518)
+        object_features = torch.tensor(object_features, dtype=torch.float32).to(self.device)  # (7, 518)
 
-                # -->518
-                object_feature = np.concatenate([clip_descriptor, bbox_extent, bbox_center])  # (512 + 3 + 3 = 518)
-                features.append(object_feature)
+        # forward
+        predicted_scene_embedding = self.embedding_net(object_features)
 
-            # to tensor (num_object, 518)
-            object_features = torch.tensor(features, dtype=torch.float32).to(self.device)  # (7, 518)
-
-
-            rl_loss = torch.load(asdict(self.config).get('loss_path', None))
-
-            # forward
-            predicted_scene_embedding = self.embedding_net(object_features)
-
-            # define loss
-            if rl_loss.ndim == 0:  
-                rl_loss_value = rl_loss.to(self.device)
-            else:  
-                rl_loss_value = rl_loss[-1].to(self.device)
-
-            # rl_loss_value = torch.tensor(rl_loss[-1], dtype=torch.float32).to(self.device)
-            self.embedding_loss = torch.abs(torch.mean(predicted_scene_embedding) * rl_loss_value)
-
-            # gradient update
-            if not self.eval or self.learn_emb:
-                self.embedding_optimizer.zero_grad()
-                self.embedding_loss.backward()
-                self.embedding_optimizer.step()
-
-
-
-            return predicted_scene_embedding #32
-        else:
-            self.stept += 1
-            if self.stept % 5000 == 0:
-                save_dir = "/home/kit/.local/share/ov/pkg/isaac-sim-4.1.0/standalone_examples/Aloha_graph/Aloha"
-                checkpoint_path = os.path.join(save_dir, f"scene_embedding_epoch_{self.stept}.pth")
-                torch.save(self.embedding_net.state_dict(), checkpoint_path)
-            # if self.eval:
-            #     scene_path = asdict(self.config).get('scene_file', None)
-            #     scene_file = os.path.join(scene_path, f"scene_{self.num_of_envs}.pkl")  # 替换为实际路径前缀
-            # else:
-            scene_path = asdict(self.config).get('scene_file_train', None)
-            scene_file = os.path.join(scene_path, f"{self.num_of_envs}.pkl")  # 替换为实际路径前缀
-            
-
-            with open(scene_file, "rb") as f:
-                objects = pickle.load(f)
-
-            # input feature (7, 518)
-            object_features = []
-            for obj_id, data in objects.items():
-                # get bbox_center and bbox_size
-                bbox_center = data["bbox_center"]  # (3,)
-                bbox_size = data["bbox_size"]      # (3,)
-                clip_embd = data["clip_embd"]      # (512,)
-
-                # -->518
-                feature = np.concatenate([bbox_center, bbox_size, clip_embd])  # (3 + 3 + 512 = 518,)
-                object_features.append(feature)
-
-            # to tensor (7, 518)
-            object_features = torch.tensor(object_features, dtype=torch.float32).to(self.device)  # (7, 518)
-
-            # object_features = self.prepare_input_data(objects, bbox_pose)
-
-            rl_loss = torch.load(asdict(self.config).get('loss_path', None))
-
-            # forward
-            predicted_scene_embedding = self.embedding_net(object_features)
-
-            # define loss
-            if rl_loss.ndim == 0:  
-                rl_loss_value = rl_loss.to(self.device)
-            else:  
-                rl_loss_value = rl_loss[-1].to(self.device)
-
-            # rl_loss_value = torch.tensor(rl_loss[-1], dtype=torch.float32).to(self.device)
-            self.embedding_loss = torch.abs(torch.mean(predicted_scene_embedding) * rl_loss_value)
-
-            # gradient update
-            if not self.eval:
-                self.embedding_optimizer.zero_grad()
-                self.embedding_loss.backward()
-                self.embedding_optimizer.step()
-
-            return predicted_scene_embedding #32
+        return predicted_scene_embedding #32
 
     def render(self, mode="human"):
         return
@@ -801,8 +832,8 @@ class CLGRENV(gym.Env):
                 cur_impulse += cur_contact.impulse[1] * cur_contact.impulse[1]
                 cur_impulse += cur_contact.impulse[2] * cur_contact.impulse[2]
                 cur_impulse = math.sqrt(cur_impulse)
-
-            if num_contact_data > 1: #1 contact with flore here yet
+            pos_obstacles = np.array([[3.5,-0.8],[4,1]])
+            if num_contact_data > 1 or not self.no_intersect_with_obstacles(self.current_jetbot_position,pos_obstacles,0.65): #1 contact with flore here yet
                 self.collision = True
 
 
@@ -917,7 +948,7 @@ class CLGRCENV(gym.Env):
 
         self.max_velocity = 1.2
         self.max_angular_velocity = math.pi*0.4
-        self.events = [0, 1]#[0, 1, 2]
+        self.events = [0]#[0, 1, 2]
         self.event = 0
 
         convert_tensor = transforms.ToTensor()
@@ -967,6 +998,21 @@ class CLGRCENV(gym.Env):
         self.t = 0
         self.traning_radius_start = 1.1
         import omni.isaac.core.utils.prims as prim_utils
+        self.learn_emb = 0
+        self.current_jetbot_position = np.array([0,0])
+
+        self.evalp = asdict(config).get('eval_print', None)
+        self.eval_log_path = asdict(config).get('eval_log_path', None)
+        self.eval_r = 0.2
+        self.eval_angle = 0
+        self.eval_dt = 0.2
+        self.eval_dangle = np.pi/18
+        self.eval_step = 0
+        self.eval_step_angle = 0
+        self.eval_sr = []
+        self.eval_write = 0
+        self.SR_len = 10
+        self.SR_t = 0
 
         light_1 = prim_utils.create_prim(
             "/World/Light_1",
@@ -1077,7 +1123,7 @@ class CLGRCENV(gym.Env):
         goal_world_position[2] = 0
 
         current_dist_to_goal = np.linalg.norm(goal_world_position[0:2] - current_jetbot_position[0:2])
-
+        self.current_jetbot_position = current_jetbot_position[0:2]
         nx = np.array([-1,0])
         ny = np.array([0,1])
         to_goal_vec = (goal_world_position - current_jetbot_position)[0:2]
@@ -1109,6 +1155,8 @@ class CLGRCENV(gym.Env):
                 print("distrib SR", list(self.prev_SR.values()))
                 self.log(str(list(self.prev_SR.values())) + str(self.num_of_step))
                 if all(np.array(list(self.prev_SR.values())) > 0.85):
+                    self.SR_t += 1
+                if self.SR_t >= self.SR_len: 
                     if not self.amount_angle_change >= self.max_amount_angle_change:
                         self.amount_angle_change += 1
                     elif not self.amount_radius_change >= self.max_amount_radius_change:
@@ -1116,6 +1164,7 @@ class CLGRCENV(gym.Env):
                         self.amount_angle_change = 0
                     self.log("training mode up to " + str(self.training_mode) + " step: " + str(self.num_of_step) + " radius " + str(self.traning_radius))
                     self.delay_change_RM = 0
+                    self.SR_t = 0
 
     def _get_terminated(self, observation, RM):
         achievements = dict.fromkeys(self.reward_modes, False)
@@ -1199,7 +1248,21 @@ class CLGRCENV(gym.Env):
             self.get_success_rate(gt_observations, terminated, sources, source)
             self.start_step = True
             reward -= self._get_punish_time()
+            if self.evalp:
+                s = 0
+                if terminated:
+                    s = 1
+                self.eval_sr.append(s)
+                if self.eval_write:
+                    self.eval_write = 0
+                    sr = sum(self.eval_sr) / len(self.eval_sr)
+                    message = "r: " + str(round(self.traning_radius, 2)) + " a: " + str(round(self.traning_angle,2)) + " s: " + str(round(sr,2))
+                    self.eval_sr = []
+                    f = open(self.eval_log_path, "a+")
+                    f.write(message + "\n")
+                    f.close()
         print("start",self.traning_radius_start)
+
         return observations, reward, terminated, truncated, info
 
 
@@ -1220,10 +1283,24 @@ class CLGRCENV(gym.Env):
                       np.array([2.3652637004852295,1.6736856698989868,0.7]),
                       np.array([2.525071859359741,2.019548177719116,0.7]),
                       np.array([2.6450564861297607,2.3489251136779785,0.7]),]
+        poses_check_bowl = [np.array([2.7052321434020996,-2.2619035243988037,0.7]),
+                      np.array([2.552615165710449,-1.7984942197799683,0.7]),
+                      np.array([2.3862786293029785,-1.4699782133102417,0.7]),
+                      np.array([2.1094179153442383,-1.0277622938156128,0.7]),
+                      np.array([1.8545807600021362,-0.5845907926559448,0.7]),
+                      np.array([2.155369758605957,1.158652663230896,0.7]),
+                      np.array([2.331857681274414,1.4302781820297241,0.7]),
+                      np.array([2.350813388824463,1.7375775575637817,0.7]),
+                      np.array([2.5751214027404785,2.1429364681243896,0.7]),
+                      np.array([2.6092638969421387,2.336885690689087,0.7]),]
         if self.event == 0:
-            self.num_of_envs = np.random.choice([0,1,2,3])
+            self.num_of_envs = np.random.choice([1,2,3,4])
         elif self.event == 1:
             self.num_of_envs = np.random.choice([5,6,7,8,9])
+        if not self.eval and not self.evalp:
+            self.goal_position = poses_bowl[self.num_of_envs]
+        else:
+            self.goal_position = poses_check_bowl[self.num_of_envs]
         # self.num_of_envs = self.t
         
         # if self.t >= len(poses_bowl)-1:
@@ -1244,22 +1321,37 @@ class CLGRCENV(gym.Env):
                     position=self.goal_position,
                     usd_path=asdict(self.config).get('cup_usd_path', None),
                 )
+
         if self.eval:
             n = np.random.randint(2)
-            self.traning_angle = ((-1)**n)*asdict(self.config).get('eval_angle', None)
-            self.traning_radius = asdict(self.config).get('eval_radius', None)
+            phi =asdict(self.config).get('eval_angle', None)
+            r = asdict(self.config).get('eval_radius', None)
+            self.traning_angle = ((-1)**n)*phi
+            self.traning_radius = r
+        elif self.evalp:
+            n = np.random.randint(2)
+            phi = self.eval_step_angle*self.eval_dangle
+            r = self.eval_step*self.eval_dt
+            self.traning_angle = ((-1)**n)*phi
+            self.traning_radius = r
+            step_angle_update = 20
+            if (self.num_of_step % (step_angle_update-1) == 0) and self.num_of_step > 1:
+                self.eval_write = 1
+            if self.num_of_step % step_angle_update == 0:
+                self.eval_step_angle += 1
+            if self.max_trining_angle + np.pi/9 < phi:
+                self.eval_step_angle = 0
+                self.eval_step += 1
         else:
-            self.traning_radius = self.traning_radius_start + self.amount_radius_change*self.max_traning_radius/self.max_amount_radius_change
+            self.traning_radius = self.amount_radius_change*self.max_traning_radius/self.max_amount_radius_change
             self.traning_angle = self.amount_angle_change*self.max_trining_angle/self.max_amount_angle_change
+        print("eval reset: ", self.eval)
         print("self.traning_radius",  self.traning_radius)
         print("self.traning_angle", self.traning_angle)
         if self.num_of_step > 0:
             self.change_reward_mode()
 
         new_pos, new_angle = self.get_position(self.goal_position[0], self.goal_position[1])
-        # new_pos=[2.8022,1.4589,0.1]
-        # new_pos=[5,-2.2,0.1]
-        print("pos", new_pos, new_angle, self.num_of_envs)
         self.jetbot.set_world_pose(new_pos ,get_quaternion_from_euler(new_angle))
         observations = self.get_observations()
         return observations, info
@@ -1269,10 +1361,12 @@ class CLGRCENV(gym.Env):
         self.change_line += 1
         reduce_r = 1
         reduce_phi = 1
-        # if self.change_line >= self.repeat or self.eval:
-        #     reduce_r = np.random.rand()
-        #     reduce_phi = np.random.rand()
-        #     self.change_line=0
+        track_width = 1.2
+        pos_obstacles = np.array([[3.675,-0.8],[4,1]])
+        if self.change_line >= self.repeat:
+            reduce_r = np.random.rand()
+            reduce_phi = np.random.rand()
+            self.change_line=0
         print("reduce", reduce_r)
         while 1:
             k += 1
@@ -1281,12 +1375,9 @@ class CLGRCENV(gym.Env):
                 target_pos += np.array([0,0,0])
             elif self.event == 1:
                 target_pos += np.array([0,0,0])
-            
-            # if self.traning_radius > 4:
-            #     target_pos += np.array([2,-y_goal,0])
 
             alpha = np.random.rand()*2*np.pi
-            target_pos += reduce_r*self.traning_radius*np.array([np.cos(alpha), np.sin(alpha), 0])
+            target_pos += (self.traning_radius_start + reduce_r*(self.traning_radius))*np.array([np.cos(alpha), np.sin(alpha), 0])
 
             goal_world_position = np.array([x_goal, y_goal])
             nx = np.array([-1,0])
@@ -1296,15 +1387,21 @@ class CLGRCENV(gym.Env):
             cos_angle = np.dot(to_goal_vec, nx) / np.linalg.norm(to_goal_vec) / np.linalg.norm(nx)
             
             quadrant = self.get_quadrant(nx, ny, to_goal_vec)
-            if target_pos[1]>=-2.3 and target_pos[1]<=2.3 and target_pos[0]>=2.2 and ((target_pos[1]<=-0 and target_pos[0]>-target_pos[1]*0.572+2.35) 
-                                                                                      or (target_pos[1]>=0 and target_pos[0]>target_pos[1]*0.285+2.35)):
+            if target_pos[1]>=-2.3 and target_pos[1]<=2.3 and target_pos[0]>=2.2 and ((target_pos[1]<=-0 and target_pos[0]>-target_pos[1]*0.572+2.35)
+                        or (target_pos[1]>=0 and target_pos[0]>target_pos[1]*0.285+2.35)) and (np.abs(target_pos[1] - goal_world_position[1]) < track_width) and self.no_intersect_with_obstacles(target_pos[0:2],pos_obstacles,0.83):
                 n = np.random.randint(2)
                 return target_pos, quadrant*np.arccos(cos_angle) + ((-1)**n)*reduce_phi*self.traning_angle
             elif k >= 100:
-                pass
-                # print("can't get correct robot position: ", target_pos, quadrant*np.arccos(cos_angle) + reduce_phi*self.traning_angle, reduce_r, self.num_of_envs)
-            
-
+                print("can't get correct robot position: ", target_pos, quadrant*np.arccos(cos_angle) + reduce_phi*self.traning_angle, reduce_r, self.num_of_envs)
+                
+    def no_intersect_with_obstacles(self, target_pos,pos_obstacles,r):
+        interect = True
+        for pos_obstacle in pos_obstacles:
+            if  np.abs(np.linalg.norm(pos_obstacle - target_pos)) < r:
+                print(np.linalg.norm(pos_obstacle - target_pos))
+                interect = False
+        return interect
+    
     def get_observations(self):
         self._my_world.render()
         jetbot_linear_velocity = self.jetbot.get_linear_velocity()
@@ -1318,26 +1415,28 @@ class CLGRCENV(gym.Env):
         else:
             print("Image tensor is NONE!")
         transform = T.ToPILImage()
-
-        yimg = images[0].cpu().numpy().transpose(1, 2, 0) 
-        yolo_classes = list(self.model.names.values())
-        classes_ids = [yolo_classes.index(clas) for clas in yolo_classes]
-        conf = 0.3
-        results = self.model.predict(yimg, classes=45, conf=conf)
-        if results[0].masks is not None:
-            colors = 255#[random.choices(range(256), k=1) for _ in classes_ids]
-            for result in results:
-                for mask, box in zip(result.masks.xy, result.boxes):
-                    points = np.int32([mask])
-                    color_number = classes_ids.index(int(box.cls[0]))
-                    cv2.fillPoly(yimg, points, [0,256,0])
-            # cv2.imwrite("/home/kit/.local/share/ov/pkg/isaac-sim-4.1.0/standalone_examples/Aloha/img/yolotest.png", yimg)
-            img_current = self.clip_preprocess(transform(yimg)).unsqueeze(0).to(self.device)
+        if True:
+            yimg = images[0].cpu().numpy().transpose(1, 2, 0) 
+            yolo_classes = list(self.model.names.values())
+            classes_ids = [yolo_classes.index(clas) for clas in yolo_classes]
+            conf = 0.3
+            results = self.model.predict(yimg, classes=45, conf=conf)
+            if results[0].masks is not None:
+                colors = 255#[random.choices(range(256), k=1) for _ in classes_ids]
+                for result in results:
+                    for mask, box in zip(result.masks.xy, result.boxes):
+                        points = np.int32([mask])
+                        color_number = classes_ids.index(int(box.cls[0]))
+                        cv2.fillPoly(yimg, points, [0,256,0])
+                # cv2.imwrite("/home/kit/.local/share/ov/pkg/isaac-sim-4.1.0/standalone_examples/Aloha/img/yolotest.png", yimg)
+                img_current = self.clip_preprocess(transform(yimg)).unsqueeze(0).to(self.device)
+            else:
+                print("can't detect")
+                # cv2.imwrite("/home/kit/.local/share/ov/pkg/isaac-sim-4.1.0/standalone_examples/Aloha/img/yolotest.png", yimg)
+                img_current = self.clip_preprocess(transform(img[0])).unsqueeze(0).to(self.device)
+            #save_image(make_grid(yimg, nrows = 2), '/home/kit/.local/share/ov/pkg/isaac-sim-2023.1.1/standalone_examples/base_aloha_env/Aloha/img/yolotest.png')
         else:
-            print("can't detect")
-            # cv2.imwrite("/home/kit/.local/share/ov/pkg/isaac-sim-4.1.0/standalone_examples/Aloha/img/yolotest.png", yimg)
             img_current = self.clip_preprocess(transform(img[0])).unsqueeze(0).to(self.device)
-        #save_image(make_grid(yimg, nrows = 2), '/home/kit/.local/share/ov/pkg/isaac-sim-2023.1.1/standalone_examples/base_aloha_env/Aloha/img/yolotest.png')
         with torch.no_grad():
             img_current_emb = self.clip_model.encode_image(img_current)
         event = self.event,
@@ -1390,7 +1489,7 @@ class CLGRCENV(gym.Env):
             checkpoint_path = os.path.join(save_dir, f"scene_embedding_epoch_{self.stept}.pth")
             torch.save(self.embedding_net.state_dict(), checkpoint_path)
         scene_path = asdict(self.config).get('scene_file', None)
-        scene_file = os.path.join(scene_path, f"scene_{self.num_of_envs}.pkl")  # 替换为实际路径前缀
+        scene_file = os.path.join(scene_path, f"scene_{self.num_of_envs}.pkl")
 
         with open(scene_file, "rb") as f:
             objects = pickle.load(f)
@@ -1473,6 +1572,6 @@ class CLGRCENV(gym.Env):
                 cur_impulse += cur_contact.impulse[1] * cur_contact.impulse[1]
                 cur_impulse += cur_contact.impulse[2] * cur_contact.impulse[2]
                 cur_impulse = math.sqrt(cur_impulse)
-
-            if num_contact_data > 1: #1 contact with flore here yet
+            pos_obstacles = np.array([[3.5,-0.8],[4,1]])
+            if num_contact_data > 1 or not self.no_intersect_with_obstacles(self.current_jetbot_position,pos_obstacles,0.65): #1 contact with flore here yet
                 self.collision = True
