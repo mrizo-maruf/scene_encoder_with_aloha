@@ -1,0 +1,5 @@
+# ignore vc code
+.vscode/
+# ignore python cache
+__pycache__/
+*.pyc
