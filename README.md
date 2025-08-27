@@ -1,3 +1,9 @@
+## Experiment plans
+1. bbq scene with vl-sat edges, GNN encoder with learned vector edge encoding
+2. bbq scene with vl-sat edges, GNN encoder with hidden implicit edge (like in 3DGraphLLM)
+3. bbq scene with sceneverse edges, GNN encoder with learned vector encoding
+4. other than bbq
+
 # Установка:
 1. Скачать папки assets, model и scene по ссылке https://disk.yandex.com/d/HlCCxiESonoKzQ в репозиторий.
 2. Установить необходимые модули:
