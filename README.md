@@ -1,5 +1,11 @@
 ## Experiment plans
 1. bbq scene with vl-sat edges, GNN encoder with learned vector edge encoding
+    * Node features shape: `torch.Size([12, 518])`
+    * Edge index shape: `torch.Size([2, 132])`
+    * Edge attributes shape: `torch.Size([132])`
+    * Avg_100 inference time: `0.0020629024505615236`
+    * MAX GPU memory allocation: `10.0068359375 MB`
+    * Scene embedding shape: `torch.Size([1, 32])`
 2. bbq scene with vl-sat edges, GNN encoder with hidden implicit edge (like in 3DGraphLLM)
 3. bbq scene with sceneverse edges, GNN encoder with learned vector encoding
 4. other than bbq
