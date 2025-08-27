@@ -3,7 +3,7 @@
     * Node features shape: `torch.Size([12, 518])`
     * Edge index shape: `torch.Size([2, 132])`
     * Edge attributes shape: `torch.Size([132])`
-    * Avg_100 inference time: `0.0020629024505615236`
+    * Avg_100 inference time in secs: `0.0020629024505615236 secs.`
     * MAX GPU memory allocation: `10.0068359375 MB`
     * Scene embedding shape: `torch.Size([1, 32])`
 2. bbq scene with vl-sat edges, GNN encoder with hidden implicit edge (like in 3DGraphLLM)
