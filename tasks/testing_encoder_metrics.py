@@ -176,7 +176,7 @@ end_time = time.time()
 
 avg_inference_time = (end_time - start_time) / num_runs
 
-print(f"Avg_100 inference time: {avg_inference_time}")
+print(f"Avg_100 inference time: {avg_inference_time} secs.")
 
 torch.cuda.reset_peak_memory_stats()
 with torch.no_grad():
